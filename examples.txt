@@ -1,0 +1,39 @@
+
+type aged = {age: int} in
+let attach_age : int -> (T: {}) -> (T + {age : int}) = \a p ->
+	T with {age = a}
+in
+let bob = {name = "Bob"} in
+attach_age 28 bob
+
+~>
+
+{name = "Bob", age = 28} : {name: string, age: int}
+
+
+
+
+####
+
+
+type none = unit in
+type some 'a = 'a in
+type option 'a = some 'a | none in
+
+type empty = unit in
+type 'a list = {hd: 'a, tl: list 'a} | empty in
+
+let rec index : int -> list 'a -> (option 'a) = \i l ->
+	when l is 
+	| {hd: 'a, tl: list 'a} -> if i = 0 then l.hd else index (i-1) l.tl
+	| empty -> ()
+in
+
+let rec init : int -> 'a -> list 'a = \i e ->
+	if i = 0 then () else {hd = e, init (i-1) e}
+in
+
+
+when index 4 (init 42 1) is
+| none -> "nothing"
+| i: some int -> i
