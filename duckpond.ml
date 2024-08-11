@@ -30,12 +30,15 @@ type term =
   | Access of term * string 
   | Bind of string * typ * term * term
   | TypeAlias of string * typ * term
-  | WhenIs of term * (type_pattern * term) list
+  | WhenIs of term * ((string option * pattern) * term) list
 
-and type_pattern =
-  | Type of typ
-  | NameAndType of string * typ
-  | Any
+and pattern =
+  | P_Type of typ
+  | P_Int of int
+  | P_String of string
+  | P_Bool of bool
+  | P_Tuple of pattern * pattern
+  | P_Any
 
 type value =
   | V_Unit
@@ -74,10 +77,11 @@ let rec type_match type_target typ = match simplify_type type_target, simplify_t
   | T_NameBind(_,ty), t -> type_match ty t
   | T_Unit, T_Unit
   | T_Int, T_Int
+  | T_Bool, T_Bool
   | T_String, T_String -> true
   | T_Func(tt0,tt1), T_Func(t0,t1) -> type_match tt0 t0 && type_match tt1 t1
   | T_Object c0, T_Object c1 -> StringMap.for_all (fun n t -> match StringMap.find_opt n c1 with | None -> false | Some t' -> type_match t t') c0
-  | T_Alts ts0, T_Alts ts1 -> List.combine ts0 ts1 |> List.for_all (fun (t0,t1) -> type_match t0 t1)
+  | T_Alts ts0, T_Alts ts1 -> List.for_all (fun ty -> List.mem ty ts1) ts0 (*List.combine ts0 ts1 |> List.for_all (fun (t0,t1) -> type_match t0 t1)*)
   | T_Alts ts, t -> List.exists (fun at -> type_match at t) ts
   | _ -> false
 
@@ -138,10 +142,10 @@ let rec specialize_type types t = match t with
   | T_Addition(t0,t1) -> T_Addition(specialize_type types t0, specialize_type types t1)
   | _ -> t
 
-let type_pattern_alias_subst tp types = match tp with
-  | Type t -> Type(specialize_type types t)
-  | NameAndType(n,t) -> NameAndType(n, specialize_type types t)
-  | Any -> Any
+let rec pattern_alias_subst pat types = match pat with
+  | P_Type t -> P_Type(specialize_type types t)
+  | P_Tuple(p0,p1) -> P_Tuple(pattern_alias_subst p0 types, pattern_alias_subst p1 types)
+  | _ -> pat
 
 let rec type_alias_substitute term types : term = match term with
   | Unit
@@ -157,7 +161,7 @@ let rec type_alias_substitute term types : term = match term with
   | Access(t,n) -> Access(type_alias_substitute t types,n)
   | Bind(n,ty,e,b) -> Bind(n,specialize_type types ty, type_alias_substitute e types, type_alias_substitute b types)
   | TypeAlias(n,ty,t) -> type_alias_substitute t (StringMap.add n ty types)
-  | WhenIs(t,alts) -> WhenIs(type_alias_substitute t types, List.map (fun (tp,t) -> (type_pattern_alias_subst tp types, type_alias_substitute t types)) alts)
+  | WhenIs(t,alts) -> WhenIs(type_alias_substitute t types, List.map (fun ((n_opt,tp),t) -> ((n_opt, pattern_alias_subst tp types), type_alias_substitute t types)) alts)
 
 let type_name_substitute name subst = 
   let rec type_name_substitute' typ = match typ with
@@ -216,6 +220,30 @@ let rec type_value binds v = match v with
   | V_Func(f) -> failwith "!!"
   | V_Object c -> T_Object (StringMap.map (fun (t,_) -> t) c)
 
+and type_pattern pat = match pat with
+  | P_Type t -> t
+  | P_Int _ -> T_Int
+  | P_Bool _ -> T_Bool
+  | P_String _ -> T_String
+  | P_Tuple(p0,p1) -> T_Tuple(type_pattern p0, type_pattern p1)
+  | _ -> failwith "No type can be extracted from P_Any"
+
+and pattern_bind n_opt pat binds = Option.fold ~none:binds ~some:(fun n -> match pat with
+  | P_Bool _ -> StringMap.add n T_Bool binds
+  | P_Type ty -> StringMap.add n ty binds
+  | P_Int _ -> StringMap.add n T_Int binds
+  | P_String _ -> StringMap.add n T_String binds
+  | _ -> binds (* The binding should still be created, just with the same type as before, i.e. the type has not be specialized *)
+) n_opt
+
+and when_is_type binds alts = match List.map (fun ((n_opt, pat),t) -> type_term (pattern_bind n_opt pat binds) t) alts with
+  | [] -> failwith "Empty WhenIs"
+  | h::t -> (match List.fold_left (fun acc ty -> if List.exists (type_equal ty) acc then acc else ty::acc) [h] t with
+    | [] -> failwith "Empty alts"
+    | [h] -> h
+    | ts -> T_Alts ts
+  )
+
 and type_term binds t = match t with
   | Unit -> T_Unit
   | Bool _ -> T_Bool
@@ -266,25 +294,33 @@ and type_term binds t = match t with
   | WhenIs(term,alts) -> (match type_term binds term with
     | T_Alts [] -> failwith "Empty alts type"
     | T_Alts alts_types -> (
-        let alt_match target ty = match target with
-        | Type t -> type_match t ty
-        | NameAndType(_,t) -> type_match t ty
-        | Any -> true
-        in
-        let pattern_bind tp binds = match tp with
-          | NameAndType(n,ty) -> StringMap.add n ty binds
-          | _ -> binds
-        in
-        if List.for_all (fun ty -> List.exists (fun (tp,_) -> alt_match tp ty) alts) alts_types then 
-          (match List.map (fun (tp,t) -> type_term (pattern_bind tp binds) t) alts with
-          | [] -> failwith "Empty WhenIs"
-          | h::t -> (match List.fold_left (fun acc ty -> if List.exists (type_equal ty) acc then acc else ty::acc) [h] t with
-            | [] -> failwith "Empty alts"
-            | [h] -> h
-            | ts -> T_Alts ts
-          ))
-        else failwith "WhenIs not total"
+        (*let alt_match target ty = match target with
+        | P_Type t -> type_match t ty
+        | P_Bool _ -> type_match T_Bool ty
+        | P_Int _ -> type_match T_Int ty
+        | P_String _ -> type_match T_String ty
+        | P_Tuple(_,_) -> failwith "Tuple matching not implemented"
+        | P_Any -> true
+        in*)
+        when_is_type binds alts
+        (*if List.for_all (fun ty -> List.exists (fun ((n_opt,pat),_) -> alt_match pat ty) alts) alts_types then 
+          when_is_type binds alts
+        else failwith "WhenIs not total"*)
     )
+    | T_Bool -> 
+      if List.for_all (fun ((n_opt, pat), body) -> match pat with 
+        | P_Bool _ 
+        | P_Any -> true
+        | _ -> false
+      ) alts then when_is_type binds alts
+      else failwith "when_is bool case failed"
+    | T_Int -> 
+      if List.for_all (fun ((n_opt, pat), body) -> match pat with 
+        | P_Int _ 
+        | P_Any -> true
+        | _ -> false
+      ) alts then when_is_type binds alts
+      else failwith "when_is int case failed"
     | _ -> failwith "WhenIs on non-alts"
   )
 
@@ -324,15 +360,18 @@ let rec eval_term (binds : (value * typ) StringMap.t) t : value = match t with
   | Bind(n,ty,t,b) -> eval_term (StringMap.add n (eval_term binds t,ty) binds) b
   | TypeAlias(n,ty,b) -> failwith "Named type bindings cannot evaluate, must be replaced prior to evaluation"
   | WhenIs(t,alts) -> 
-    let alts_match target ty = match target with
-      | Type t -> type_match t ty
-      | NameAndType(_,t) ->  type_match t ty
-      | Any -> true
+    let rec alts_match target value = match target, value with
+      | P_Type t, _ -> type_match t (type_value binds value)
+      | P_Bool v, V_Bool actual -> v = actual
+      | P_String v, V_String actual -> v = actual
+      | P_Int v, V_Int actual -> v = actual
+      | P_Tuple(p0,p1), V_Tuple(actual0,actual1) -> alts_match p0 actual0 && alts_match p1 actual1
+      | P_Any, _ -> true
+      | _ -> false
     in
     let v = eval_term binds t in
-    let tt = type_value binds v in
-    match List.find_opt (fun (tp,_) -> alts_match tp tt) alts with
-    | Some(NameAndType(n,ty), t) -> eval_term (StringMap.add n (v,ty) binds) t
+    match List.find_opt (fun ((_,tp),_) -> alts_match tp v) alts with
+    | Some((Some n, pat), t) -> eval_term (StringMap.add n (v, type_pattern pat) binds) t
     | Some(_, t) -> eval_term binds t
     | None -> failwith "No matching alternative found"
 
@@ -352,10 +391,32 @@ let builtin_int_sub = V_Func(fun v -> match v  with
   | _ -> failwith "Builtin addition failed"
 )
 
+let builtin_int_mul = V_Func(fun v -> match v  with
+  | V_Int a -> V_Func (fun v -> match v with
+    | V_Int b -> V_Int(a*b) 
+    | _ -> failwith "Builtin addition failed"  
+  )
+  | _ -> failwith "Builtin addition failed"
+)
+
 let builtin_binds = [
   ("+", (builtin_int_add, T_Func(T_Int, T_Func(T_Int, T_Int))));
+  ("*", (builtin_int_mul, T_Func(T_Int, T_Func(T_Int, T_Int))));
   ("-", (builtin_int_sub, T_Func(T_Int, T_Func(T_Int, T_Int))));
 ]
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 (*
 type has_num = {num: int} in
@@ -378,8 +439,8 @@ f ""
 let program1 =
   Bind("f", T_Func(T_Alts[T_Int; T_String], T_Int),
     Func("x", T_Alts[T_Int; T_String], WhenIs(Name "x", [
-      (Type T_Int, Int 0);
-      (Type T_String, Int 1);
+      ((None, P_Type T_Int), Int 0);
+      ((None, P_Type T_String), Int 1);
     ])),
     App(Name "f", String "")
   )
@@ -405,8 +466,8 @@ f 42 + f ()
 let program3 =
   Bind("f", T_Func(T_Alts[T_Int; T_Unit], T_Int),
     Func("x", T_Alts[T_Int; T_Unit], WhenIs(Name "x", [
-      (Type T_Unit, Int 0);
-      (NameAndType("x", T_Int), Name "x");
+      ((None, P_Type T_Unit), Int 0);
+      ((Some "x", P_Type T_Int), Name "x");
     ])),
     App(App(Name "+", 
       App(Name "f", Int 42)),
@@ -479,6 +540,36 @@ let program7 =
     )
   )
 
+
+(*
+let f = \i -> when i is
+  | 0 -> false
+  | 69 -> "funny"
+  | 420 -> "weed"
+  | _ -> i * 10
+in
+when f 2 is
+| "funny" -> "nice"
+| "weed" -> "haha"
+| bool -> "zero"
+| i: int -> i
+*)
+let program8 =
+  Bind("f",T_Func(T_Int, T_Alts[T_Bool;T_String;T_Int]), 
+    Func("i", T_Int, WhenIs(Name "i", [
+      ((None, P_Int 0), Bool false);
+      ((None, P_Int 69), String "funny");
+      ((None, P_Int 420), String "weed");
+      ((None, P_Any), App(App(Name "*", Name "i"), Int 10));
+    ])),
+    WhenIs(App(Name "f", Int 40), [
+      ((None, P_String "funny"), String "nice");
+      ((None, P_String "weed"), String "haha");
+      ((None, P_Type T_Bool), String "zero");
+      ((Some "i", P_Type T_Int), Name "i");
+    ])
+  )
+
 let execute t =
   let defaults = StringMap.of_list builtin_binds in
   let t = type_alias_substitute t StringMap.empty in
@@ -487,4 +578,4 @@ let execute t =
   Printf.printf "%s : %s\n" (print_value v) (print_type ty)
 
 
-let () = execute program7
+let () = execute program8
