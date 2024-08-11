@@ -1,4 +1,6 @@
 # duckpond
+A functional programming language with duck typing, structs and alternator types
+
 
 ## TODO
 - Recursive bindings
