@@ -1,0 +1,7 @@
+let f : (int | unit) -> int = \x: (int | unit) -> (
+    when x is 
+    | x: int -> x 
+    | unit -> 0
+)
+in
+f 42 + f ()

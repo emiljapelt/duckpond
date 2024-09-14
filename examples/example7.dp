@@ -1,0 +1,11 @@
+type some = int in
+type none = unit in
+type option = some | none in
+type tuple = {fst: int, snd: int} in
+let max : tuple -> option = \t: tuple ->
+  if t.fst = t.snd then ()
+  else if t.fst > t.snd then t.fst else t.snd
+in
+(when max {fst: int = 2, snd: int = 3} is
+| i: some -> i
+| none -> "equal")

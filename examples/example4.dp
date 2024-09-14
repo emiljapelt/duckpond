@@ -1,0 +1,2 @@
+let bob : {name: string, age: int} = {name: string = "Bob", age: int = 40} in
+bob with {age: int = bob.age + 1}

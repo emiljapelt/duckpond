@@ -1,0 +1,22 @@
+(ocamllex lexer)
+(menhir (flags --dump) (modules parser))
+(library
+ (name duckpondlib)
+ (libraries unix threads str)
+ (modules
+   values
+   io
+   exceptions
+   errors
+   flags
+   monad
+   absyn
+   lexer
+   parser
+   interpreter
+   defaults
+   optimize
+   inference
+   typing
+ )
+)

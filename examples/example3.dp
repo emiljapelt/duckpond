@@ -1,0 +1,7 @@
+let f : (int | string) -> int = \x : (string | int) -> (
+    when x is
+    | int -> 0
+    | string -> 1
+)
+in
+f ""

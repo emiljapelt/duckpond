@@ -1,0 +1,6 @@
+let add_id : int -> (A: {}) -> (A + {id: int}) = 
+  \id: int -> \o: {} -> o with {id : int = id} in
+let bob : {name: string} = {name : string = "Bob"} in
+(add_id 420 bob)
+
+

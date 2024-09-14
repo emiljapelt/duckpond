@@ -1,0 +1,6 @@
+
+type has_num = {num: int} in
+let f : has_num -> has_num = 
+    \o : has_num -> {num : int = o.num + 2} 
+in
+f {num : int = 5}

@@ -1,0 +1,2 @@
+let meme = \o -> o.age in
+meme 

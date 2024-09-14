@@ -1,0 +1,4 @@
+type aged = {age: int} in
+let bob : aged + {name: string} = {name: string = "Bob", age: int = 40} in
+let age_incr : aged -> aged = \a : aged -> a with {age: int = a.age + 1} in
+age_incr bob 

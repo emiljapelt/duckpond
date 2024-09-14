@@ -1,0 +1,14 @@
+let f : int -> (bool | string | int) = \i : int -> (
+    when i is
+    | 0 -> false
+    | 69 -> "funny"
+    | 420 -> "weed"
+    | _ -> i * 10 
+)
+in (
+when f 69 is
+| "funny" -> "nice"
+| "weed" -> "haha"
+| bool -> "zero"
+| i: int -> i
+)

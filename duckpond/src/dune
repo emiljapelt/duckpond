@@ -1,0 +1,7 @@
+(executable
+ (public_name duckpond)
+ (name duckpond)
+ (modules duckpond)
+ (libraries duckpondlib str) 
+ (modes byte exe)
+)
